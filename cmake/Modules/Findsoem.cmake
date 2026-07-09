@@ -1,0 +1,62 @@
+# Copyright 2022 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+include(FindPackageHandleStandardArgs)
+
+# Prefer a system-installed CMake config, if one is available.
+find_package(soem CONFIG QUIET)
+
+if(NOT soem_FOUND)
+  # Otherwise, rely on pkg-config.
+  find_package(PkgConfig QUIET)
+
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(SOEM_PKG_CONFIG QUIET IMPORTED_TARGET soem-0.1)
+
+    if(SOEM_PKG_CONFIG_FOUND)
+      if(NOT TARGET soem)
+        add_library(soem INTERFACE IMPORTED)
+        set_property(TARGET soem PROPERTY INTERFACE_LINK_LIBRARIES PkgConfig::SOEM_PKG_CONFIG)
+      endif()
+      set(soem_VERSION ${SOEM_PKG_CONFIG_VERSION})
+    endif()
+  endif()
+endif()
+
+if(NOT soem_FOUND AND NOT SOEM_PKG_CONFIG_FOUND)
+  # Neither a CMake config nor a pkg-config file is available: this is the
+  # case for the vendored build (plain CMake project, no `install(EXPORT)`
+  # and no .pc file). Locate the headers/library directly; CMAKE_PREFIX_PATH
+  # already contains the vendor package's `opt/soem_vendor_ros2` prefix via
+  # vendor_package_cmake_prefix.cmake.
+  find_path(SOEM_INCLUDE_DIR NAMES soem/ethercat.h)
+  find_library(SOEM_LIBRARY NAMES soem)
+
+  find_package_handle_standard_args(soem
+    REQUIRED_VARS SOEM_LIBRARY SOEM_INCLUDE_DIR
+  )
+
+  if(soem_FOUND AND NOT TARGET soem)
+    add_library(soem STATIC IMPORTED)
+    set_target_properties(soem PROPERTIES
+      IMPORTED_LOCATION "${SOEM_LIBRARY}"
+      # SOEM's own headers include each other unqualified (e.g. ethercateoe.h
+      # does `#include <ethercattype.h>`), so `include/soem` itself must be on
+      # the include path, in addition to its parent for `#include <soem/...>`.
+      INTERFACE_INCLUDE_DIRECTORIES "${SOEM_INCLUDE_DIR};${SOEM_INCLUDE_DIR}/soem"
+    )
+  endif()
+
+  mark_as_advanced(SOEM_INCLUDE_DIR SOEM_LIBRARY)
+endif()
