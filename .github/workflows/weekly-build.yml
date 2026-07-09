@@ -8,13 +8,12 @@
 # dropping/changing ament_cmake_vendor_package, or the .docker/Dockerfile
 # image itself bit-rotting.
 #
-# It rebuilds the .docker/Dockerfile image and, inside it, does exactly what
-# was verified manually when soem_vendor_ros2 was last fixed: colcon build +
-# colcon test soem_vendor_ros2, then build and run a throwaway downstream
-# package that does find_package(soem_vendor_ros2) -> find_package(soem) and
-# links/compiles/runs against the vendored SOEM library. That downstream step
-# is what actually exercises the exported CMake target, not just the vendor
-# package's own build.
+# It rebuilds the .docker/Dockerfile image and, inside it, colcon builds and
+# tests soem_vendor_ros2 plus test/downstream_probe: a package that consumes
+# it like a real downstream package would (find_package(soem_vendor_ros2) ->
+# find_package(soem) -> link -> run). That downstream step is what actually
+# exercises the exported CMake target, not just the vendor package's own
+# build.
 
 name: Weekly build
 
@@ -36,7 +35,7 @@ jobs:
       - name: Build .docker/Dockerfile image
         run: docker build -f src/soem_vendor_ros2/.docker/Dockerfile -t soem_vendor_ros2:weekly src/soem_vendor_ros2
 
-      - name: colcon build + test soem_vendor_ros2, then a downstream consumer
+      - name: colcon build + test soem_vendor_ros2 and its downstream probe
         run: |
           docker run --rm -v "${GITHUB_WORKSPACE}:/ws" -w /ws soem_vendor_ros2:weekly bash -e -c '
             rosdep init > /dev/null 2>&1 || true
@@ -44,46 +43,14 @@ jobs:
             rosdep install --from-paths src --ignore-src -y
             source /opt/ros/jazzy/setup.bash
 
-            colcon build --packages-select soem_vendor_ros2
-            colcon test --packages-select soem_vendor_ros2
+            # downstream_probe lives nested under src/soem_vendor_ros2/test/,
+            # and colcon does not recurse into a directory once it finds a
+            # package.xml there (src/soem_vendor_ros2 itself), so it must be
+            # given as its own base path or it is silently skipped.
+            BASE_PATHS="src/soem_vendor_ros2 src/soem_vendor_ros2/test"
+            colcon build --base-paths $BASE_PATHS --packages-select soem_vendor_ros2 downstream_probe
+            colcon test --base-paths $BASE_PATHS --packages-select soem_vendor_ros2 downstream_probe
             colcon test-result --verbose
-            source install/setup.bash
-
-            mkdir -p src/downstream_probe/src
-            cat > src/downstream_probe/CMakeLists.txt <<EOF
-          cmake_minimum_required(VERSION 3.10)
-          project(downstream_probe)
-          find_package(soem_vendor_ros2 REQUIRED)
-          find_package(soem REQUIRED)
-          add_executable(probe src/probe.c)
-          target_link_libraries(probe PRIVATE soem)
-          install(TARGETS probe DESTINATION lib/\${PROJECT_NAME})
-          EOF
-            cat > src/downstream_probe/package.xml <<EOF
-          <?xml version="1.0"?>
-          <package format="3">
-            <name>downstream_probe</name>
-            <version>0.0.0</version>
-            <description>Smoke test: consume soem_vendor_ros2 like a real downstream package would.</description>
-            <maintainer email="mcbed.robotics@gmail.com">Maciej Bednarczyk</maintainer>
-            <license>Apache-2.0</license>
-            <buildtool_depend>ament_cmake</buildtool_depend>
-            <depend>soem_vendor_ros2</depend>
-          </package>
-          EOF
-            cat > src/downstream_probe/src/probe.c <<EOF
-          #include <soem/ethercat.h>
-          #include <stdio.h>
-          int main(void) {
-            ecx_contextt ctx;
-            (void)ctx;
-            printf("soem probe linked OK\n");
-            return 0;
-          }
-          EOF
-
-            colcon build --packages-select downstream_probe
-            ./install/downstream_probe/lib/downstream_probe/probe
           '
 
       - name: Notify on failure
