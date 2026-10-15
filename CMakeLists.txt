@@ -18,7 +18,9 @@ ament_vendor(soem_vendor_ros2
   SATISFIED ${soem_FOUND}
   VCS_URL https://github.com/OpenEtherCATsociety/SOEM.git
   VCS_VERSION v${SOEM_VERSION}
-  # CMAKE_ARGS "-DCMAKE_C_FLAGS:STRING=${CMAKE_C_FLAGS}$<$<BOOL:${MSVC}>: /wd4244 /wd4267 /wd4996>"
+  # SOEM builds a static library; it must be position-independent to be linked into the shared
+  # libraries (pluginlib plugins, ros2_control hardware components) that consume it.
+  CMAKE_ARGS -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
 ament_export_dependencies(soem)
 
